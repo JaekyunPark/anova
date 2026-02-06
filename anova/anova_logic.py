@@ -283,10 +283,13 @@ def calculate_posthoc_summary(df, dep_vars, weight_col, normalize=True, use_weig
                 if p_adj < 0.01: stars = "**"
                 if p_adj < 0.001: stars = "***"
                 
-                # 시점 번호는 1부터 시작
+                # 시점 번호 대신 알파벳(a, b, c...) 사용
+                label_i = chr(ord('a') + i)
+                label_j = chr(ord('a') + j)
+                
                 if mean_diff > 0:
-                    comparisons.append(f"{i+1}>{j+1}{stars}")
+                    comparisons.append(f"{label_i}>{label_j}{stars}")
                 else:
-                    comparisons.append(f"{i+1}<{j+1}{stars}")
+                    comparisons.append(f"{label_i}<{label_j}{stars}")
                     
     return ", ".join(comparisons) if comparisons else "-"

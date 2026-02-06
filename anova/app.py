@@ -119,11 +119,15 @@ if uploaded_file is not None:
                 res = anova_logic.weighted_repeated_measures_anova(df, dep_vars, weight_col, normalize=normalize, use_weighted_df=use_weighted_df, use_frequency_weight=use_frequency_weight)
                 posthoc = anova_logic.calculate_posthoc_summary(df, dep_vars, weight_col, normalize=normalize, use_weighted_df=use_weighted_df, use_frequency_weight=use_frequency_weight)
                 
+                # 최종 P-값 결정 로직: 구형성 p >= 0.05 이면 p_unc, 아니면 p_gg
+                p_final = res['p_unc'] if res['m_p'] >= 0.05 else res['p_gg']
+                
                 results_data.append({
                     "집단 (Group)": "전체 샘플 (Total)",
                     "가중 N": f"{res['weighted_n']:.2f}",
                     "F-값": f"{res['F']:.4f}",
                     "구형성 p": f"{res['m_p']:.4f}",
+                    "p-값 (최종)": f"{p_final:.4f}",
                     "p-값 (구형성가정)": f"{res['p_unc']:.4f}",
                     "p-값 (GG)": f"{res['p_gg']:.4f}",
                     "p-값 (HF)": f"{res['p_hf']:.4f}",
@@ -144,11 +148,14 @@ if uploaded_file is not None:
                         res_sub = anova_logic.weighted_repeated_measures_anova(sub_df, dep_vars, weight_col, normalize=normalize, use_weighted_df=use_weighted_df, use_frequency_weight=use_frequency_weight)
                         posthoc_sub = anova_logic.calculate_posthoc_summary(sub_df, dep_vars, weight_col, normalize=normalize, use_weighted_df=use_weighted_df, use_frequency_weight=use_frequency_weight)
                         
+                        p_final_sub = res_sub['p_unc'] if res_sub['m_p'] >= 0.05 else res_sub['p_gg']
+                        
                         results_data.append({
                             "집단 (Group)": display_name,
                             "가중 N": f"{res_sub['weighted_n']:.2f}",
                             "F-값": f"{res_sub['F']:.4f}",
                             "구형성 p": f"{res_sub['m_p']:.4f}",
+                            "p-값 (최종)": f"{p_final_sub:.4f}",
                             "p-값 (구형성가정)": f"{res_sub['p_unc']:.4f}",
                             "p-값 (GG)": f"{res_sub['p_gg']:.4f}",
                             "p-값 (HF)": f"{res_sub['p_hf']:.4f}",
@@ -192,7 +199,7 @@ if uploaded_file is not None:
                 - GG ε > 0.75 이면 `p-값 (HF)` 권장
                 """)
             
-            st.info("⭐ **사후검증 표기 안내**: 숫자(1, 2, 3...)는 선택한 종속 변수의 순서를 의미합니다. 유의미한 차이(p < .05)가 있는 쌍만 표시됩니다.")
+            st.info("⭐ **사후검증 표기 안내**: 알파벳(a, b, c...)은 선택한 종속 변수의 순서를 의미합니다. 유의미한 차이(p < .05)가 있는 쌍만 표시됩니다.")
     
     # 임시 파일 삭제
     if os.path.exists("temp.sav"):
