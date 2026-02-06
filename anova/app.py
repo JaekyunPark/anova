@@ -60,6 +60,10 @@ if uploaded_file is not None:
 
         # --- 변수 선택 ---
         st.subheader("🔍 변수 설정")
+        
+        analysis_mode = st.radio("분석 모드 선택", ["단일 분석", "일괄 분석"], horizontal=True, 
+                               help="'단일 분석'은 하나의 세트를, '일괄 분석'은 여러 세트의 종속 변수를 한꺼번에 분석합니다.")
+        
         col1, col2 = st.columns(2)
         
         with col1:
@@ -67,8 +71,25 @@ if uploaded_file is not None:
                                     index=all_columns.index(default_weight) if default_weight in all_columns else 0)
             
         with col2:
-            dep_vars = st.multiselect("종속 변수 선택 (시점)", all_columns, default=default_deps,
-                                    help="반복 측정된 여러 시점의 변수들을 선택하세요.")
+            if analysis_mode == "단일 분석":
+                dep_vars_input = st.multiselect("종속 변수 선택 (시점)", all_columns, default=default_deps,
+                                        help="반복 측정된 여러 시점의 변수들을 선택하세요.")
+                dep_var_sets = [dep_vars_input] if dep_vars_input else []
+            else:
+                st.info("💡 종속 변수 세트를 한 줄에 하나씩 입력하세요. 변수들은 쉼표(,)로 구분합니다.")
+                batch_text = st.text_area("일괄 종속 변수 입력", 
+                                        value=", ".join(default_deps) if default_deps else "",
+                                        placeholder="예:\na1_1_1, a1_2_1, a1_3_1\na1_1_2, a1_2_2, a1_3_2",
+                                        height=150)
+                
+                # 파싱 로직
+                dep_var_sets = []
+                if batch_text:
+                    lines = batch_text.strip().split('\n')
+                    for line in lines:
+                        vars_in_line = [v.strip() for v in line.split(',') if v.strip()]
+                        if vars_in_line:
+                            dep_var_sets.append(vars_in_line)
             
         banner_vars = st.multiselect("배너(Banner) 변수 선택 (집단 구분)", all_columns, default=default_banners,
                                     help="결과를 나누어 보고 싶은 집단 변수들을 선택하세요.")
@@ -78,9 +99,11 @@ if uploaded_file is not None:
             new_preset_name = st.text_input("새 프리셋 이름")
             if st.button("프리셋 저장"):
                 if new_preset_name:
+                    # 일괄 분석 모드더라도 첫 번째 세트를 기준으로 저장하거나 명시적으로 안내
+                    current_deps = dep_var_sets[0] if dep_var_sets else []
                     config_to_save = {
                         "weight_col": weight_col,
-                        "dep_vars": dep_vars,
+                        "dep_vars": current_deps,
                         "banner_vars": banner_vars
                     }
                     save_preset(new_preset_name, config_to_save)
@@ -108,61 +131,80 @@ if uploaded_file is not None:
             st.warning("⚠️ '가중치 정규화'를 끄고 '가중치 기반 자유도'를 사용하면 모집단 크기에 의해 극단적인 P-값이 나올 수 있습니다.")
 
         if st.button("🚀 분석 실행"):
-            if not weight_col or not dep_vars:
-                st.error("가중치 변수와 최소 하나 이상의 종속 변수를 선택해야 합니다.")
-            elif len(dep_vars) < 2:
-                st.warning("반복측정 ANOVA를 위해 2개 이상의 종속 변수가 필요합니다.")
+            if not weight_col or not dep_var_sets:
+                st.error("가중치 변수와 최소 하나 이상의 종속 변수 세트를 설정해야 합니다.")
             else:
-                results_data = []
+                all_results_data = []
                 
-                # 1. Total Sample
-                res = anova_logic.weighted_repeated_measures_anova(df, dep_vars, weight_col, normalize=normalize, use_weighted_df=use_weighted_df, use_frequency_weight=use_frequency_weight)
-                posthoc = anova_logic.calculate_posthoc_summary(df, dep_vars, weight_col, normalize=normalize, use_weighted_df=use_weighted_df, use_frequency_weight=use_frequency_weight)
+                # 프로그레스 바 추가 (일괄 분석 시 유용)
+                progress_bar = st.progress(0)
+                status_text = st.empty()
                 
-                # 최종 P-값 결정 로직: 구형성 p >= 0.05 이면 p_unc, 아니면 p_gg
-                p_final = res['p_unc'] if res['m_p'] >= 0.05 else res['p_gg']
-                
-                results_data.append({
-                    "집단 (Group)": "전체 샘플 (Total)",
-                    "가중 N": f"{res['weighted_n']:.2f}",
-                    "F-값": f"{res['F']:.4f}",
-                    "구형성 p": f"{res['m_p']:.4f}",
-                    "p-값 (최종)": f"{p_final:.4f}",
-                    "p-값 (구형성가정)": f"{res['p_unc']:.4f}",
-                    "p-값 (GG)": f"{res['p_gg']:.4f}",
-                    "p-값 (HF)": f"{res['p_hf']:.4f}",
-                    "사후검증 (본페로니)": posthoc
-                })
-                
-                # 2. Banner Variables
-                for banner in banner_vars:
-                    val_labels = meta.variable_value_labels.get(banner, {}) if meta else {}
-                    valid_df = df[df[banner].notna()]
-                    groups = sorted(valid_df[banner].unique())
+                for idx, dep_vars in enumerate(dep_var_sets):
+                    status_text.text(f"분석 중... ({idx + 1}/{len(dep_var_sets)}): {', '.join(dep_vars)}")
                     
-                    for group_val in groups:
-                        sub_df = df[df[banner] == group_val]
-                        group_label = val_labels.get(group_val, str(group_val))
-                        display_name = f"{banner}: {group_label}"
+                    # 변수 존재 여부 체크
+                    missing_vars = [v for v in dep_vars if v not in all_columns]
+                    if missing_vars:
+                        st.warning(f"⚠️ '{', '.join(missing_vars)}' 변수를 찾을 수 없어 이 세트는 건너뜁니다.")
+                        continue
                         
-                        res_sub = anova_logic.weighted_repeated_measures_anova(sub_df, dep_vars, weight_col, normalize=normalize, use_weighted_df=use_weighted_df, use_frequency_weight=use_frequency_weight)
-                        posthoc_sub = anova_logic.calculate_posthoc_summary(sub_df, dep_vars, weight_col, normalize=normalize, use_weighted_df=use_weighted_df, use_frequency_weight=use_frequency_weight)
+                    if len(dep_vars) < 2:
+                        st.warning(f"⚠️ {dep_vars} 세트에 변수가 2개 미만이라 건너뜁니다.")
+                        continue
+
+                    # 1. Total Sample
+                    res = anova_logic.weighted_repeated_measures_anova(df, dep_vars, weight_col, normalize=normalize, use_weighted_df=use_weighted_df, use_frequency_weight=use_frequency_weight)
+                    posthoc = anova_logic.calculate_posthoc_summary(df, dep_vars, weight_col, normalize=normalize, use_weighted_df=use_weighted_df, use_frequency_weight=use_frequency_weight)
+                    
+                    p_final = res['p_unc'] if res['m_p'] >= 0.05 else res['p_gg']
+                    
+                    all_results_data.append({
+                        "변수 세트 (Variable Set)": ", ".join(dep_vars),
+                        "집단 (Group)": "전체 샘플 (Total)",
+                        "가중 N": f"{res['weighted_n']:.2f}",
+                        "F-값": f"{res['F']:.4f}",
+                        "구형성 p": f"{res['m_p']:.4f}",
+                        "p-값 (최종)": f"{p_final:.4f}",
+                        "p-값 (구형성가정)": f"{res['p_unc']:.4f}",
+                        "p-값 (GG)": f"{res['p_gg']:.4f}",
+                        "p-값 (HF)": f"{res['p_hf']:.4f}",
+                        "사후검증 (본페로니)": posthoc
+                    })
+                    
+                    # 2. Banner Variables
+                    for banner in banner_vars:
+                        val_labels = meta.variable_value_labels.get(banner, {}) if meta else {}
+                        valid_df = df[df[banner].notna()]
+                        groups = sorted(valid_df[banner].unique())
                         
-                        p_final_sub = res_sub['p_unc'] if res_sub['m_p'] >= 0.05 else res_sub['p_gg']
-                        
-                        results_data.append({
-                            "집단 (Group)": display_name,
-                            "가중 N": f"{res_sub['weighted_n']:.2f}",
-                            "F-값": f"{res_sub['F']:.4f}",
-                            "구형성 p": f"{res_sub['m_p']:.4f}",
-                            "p-값 (최종)": f"{p_final_sub:.4f}",
-                            "p-값 (구형성가정)": f"{res_sub['p_unc']:.4f}",
-                            "p-값 (GG)": f"{res_sub['p_gg']:.4f}",
-                            "p-값 (HF)": f"{res_sub['p_hf']:.4f}",
-                            "사후검증 (본페로니)": posthoc_sub
-                        })
+                        for group_val in groups:
+                            sub_df = df[df[banner] == group_val]
+                            group_label = val_labels.get(group_val, str(group_val))
+                            display_name = f"{banner}: {group_label}"
+                            
+                            res_sub = anova_logic.weighted_repeated_measures_anova(sub_df, dep_vars, weight_col, normalize=normalize, use_weighted_df=use_weighted_df, use_frequency_weight=use_frequency_weight)
+                            posthoc_sub = anova_logic.calculate_posthoc_summary(sub_df, dep_vars, weight_col, normalize=normalize, use_weighted_df=use_weighted_df, use_frequency_weight=use_frequency_weight)
+                            
+                            p_final_sub = res_sub['p_unc'] if res_sub['m_p'] >= 0.05 else res_sub['p_gg']
+                            
+                            all_results_data.append({
+                                "변수 세트 (Variable Set)": ", ".join(dep_vars),
+                                "집단 (Group)": display_name,
+                                "가중 N": f"{res_sub['weighted_n']:.2f}",
+                                "F-값": f"{res_sub['F']:.4f}",
+                                "구형성 p": f"{res_sub['m_p']:.4f}",
+                                "p-값 (최종)": f"{p_final_sub:.4f}",
+                                "p-값 (구형성가정)": f"{res_sub['p_unc']:.4f}",
+                                "p-값 (GG)": f"{res_sub['p_gg']:.4f}",
+                                "p-값 (HF)": f"{res_sub['p_hf']:.4f}",
+                                "사후검증 (본페로니)": posthoc_sub
+                            })
+                    
+                    progress_bar.progress((idx + 1) / len(dep_var_sets))
                 
-                st.session_state['analysis_results'] = pd.DataFrame(results_data)
+                status_text.success("✅ 모든 분석이 완료되었습니다!")
+                st.session_state['analysis_results'] = pd.DataFrame(all_results_data)
 
         # 결과 표시
         if 'analysis_results' in st.session_state:
