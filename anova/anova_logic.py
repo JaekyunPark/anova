@@ -218,3 +218,75 @@ def weighted_repeated_measures_anova(df, dep_vars, weight_col, normalize=True, u
         'weighted_n': current_sum_w if use_frequency_weight else np.sum(weights),
         'Means': mean_j.tolist()
     }
+
+def calculate_posthoc_summary(df, dep_vars, weight_col, normalize=True, use_weighted_df=True, use_frequency_weight=True):
+    """
+    본페로니 교정을 적용한 사후검증 요약 결과를 반환합니다.
+    """
+    data = df[dep_vars + [weight_col]].dropna()
+    if len(data) < 2: return "-"
+    
+    if use_frequency_weight:
+        weights = data[weight_col].round().astype(int)
+        data = data[weights > 0]
+        weights = weights[weights > 0]
+        if len(data) == 0: return "-"
+        data = data.loc[data.index.repeat(weights)].reset_index(drop=True)
+        Y = data[dep_vars].values
+        w = np.ones(len(data))
+        sum_w = len(data)
+    else:
+        Y = data[dep_vars].values
+        weights = data[weight_col].values
+        weighted_n = np.sum(weights)
+        if weighted_n == 0: return "-"
+        
+        if normalize:
+            w = weights * len(data) / weighted_n
+            sum_w = len(data)
+        else:
+            w = weights
+            sum_w = weighted_n if use_weighted_df else len(data)
+            
+    n_conditions = len(dep_vars)
+    comparisons = []
+    n_comp = n_conditions * (n_conditions - 1) // 2
+    if n_comp == 0: return "-"
+    
+    for i in range(n_conditions):
+        for j in range(i + 1, n_conditions):
+            diff = Y[:, i] - Y[:, j]
+            mean_diff = np.average(diff, weights=w)
+            # Weighted variance of difference
+            # See: https://en.wikipedia.org/wiki/Weighted_arithmetic_mean#Weighted_sample_variance
+            # Using Reliability Weights vs Frequency Weights logic
+            if use_frequency_weight:
+                var_diff = np.sum((diff - mean_diff)**2) / (sum_w - 1)
+            else:
+                # Reliability weighting: Bessel's correction variant
+                var_diff = np.sum(w * (diff - mean_diff)**2) / (np.sum(w) - 1)
+                
+            se_diff = np.sqrt(var_diff / sum_w)
+            
+            if se_diff == 0:
+                p_val = 1.0
+            else:
+                t_stat = mean_diff / se_diff
+                df_t = sum_w - 1
+                p_val = stats.t.sf(np.abs(t_stat), df_t) * 2
+            
+            # Bonferroni correction
+            p_adj = min(1.0, p_val * n_comp)
+            
+            if p_adj < 0.05:
+                stars = "*"
+                if p_adj < 0.01: stars = "**"
+                if p_adj < 0.001: stars = "***"
+                
+                # 시점 번호는 1부터 시작
+                if mean_diff > 0:
+                    comparisons.append(f"{i+1}>{j+1}{stars}")
+                else:
+                    comparisons.append(f"{i+1}<{j+1}{stars}")
+                    
+    return ", ".join(comparisons) if comparisons else "-"
