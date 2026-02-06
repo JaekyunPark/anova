@@ -1,0 +1,30 @@
+{
+    "테스트": {
+        "weight_col": "WT",
+        "dep_vars": [
+            "A1_1_1",
+            "A1_2_1",
+            "A1_3_1"
+        ],
+        "banner_vars": [
+            "SQ1"
+        ]
+    },
+    "본세팅": {
+        "weight_col": "WT",
+        "dep_vars": [
+            "A1_1_1",
+            "A1_2_1",
+            "A1_3_1"
+        ],
+        "banner_vars": [
+            "SQ1",
+            "size",
+            "SQ3a",
+            "SQ4_1a",
+            "age",
+            "DQ8_recode",
+            "SQ2"
+        ]
+    }
+}

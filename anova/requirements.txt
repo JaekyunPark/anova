@@ -1,0 +1,5 @@
+pandas
+scipy
+pyreadstat
+numpy
+streamlit
